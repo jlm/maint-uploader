@@ -2,7 +2,7 @@ Maint Uploader
 ==============
 
 This Ruby script is designed to parse the IEEE 802.1 Maintenance email reflector archive and find new maintenance request forms.
-It then parses and uploads these to the 802.1 Maintenance Database web application (https://github.com/jlm/maint).  The maintenance
+It then parses and uploads these to the [802.1 Maintenance Database](https://github.com/jlm/maint) web application.  The maintenance
 database is a Ruby on Rails web app which exposes a JSON API as well as a web-based user interface.
 
 The email archive is managed using Listserv which generates an index on HTML pages.  The excellent XML and HTML parser,
@@ -11,13 +11,13 @@ Nokogiri, can parse these without difficulty.
 Configuration
 -------------
 The URLs of the maintenance databse API and the Listserv message archive, together with the usernames and passwords for each,
-are stored in |secrets.yml| which is not included in the sources.  An example of that file file is available as |example-secrets.yml|.
+are stored in `secrets.yml` which is not included in the sources.  An example of that file file is available as `example-secrets.yml`.
 
 Deployment
 ----------
 
 The script can be deployed in a Docker container.  I use a very simple one based on Ruby:2.3.0-onbuild.  This method is frowned upon.
-Bear in mind that the |secrets.yml| file will be included into the container, so the container is secret too.  There are methods
+Bear in mind that the `secrets.yml` file will be included into the container, so the container is secret too.  There are methods
 to isolate the secret information from the container, but I have not bothered to do this.
 
 License

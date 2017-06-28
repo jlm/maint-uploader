@@ -28,9 +28,9 @@ require 'logger'
 ####
 def login(api, username, password)
   login_request = {}
-  login_request["user"] = {}
-  login_request["user"]["email"] = username
-  login_request["user"]["password"] = password
+  login_request['user'] = {}
+  login_request['user']['email'] = username
+  login_request['user']['password'] = password
 
   begin
     res = api['users/sign_in'].post login_request.to_json, { content_type: :json, accept: :json }
@@ -296,6 +296,7 @@ begin
             if item.nil?
               add_new_item(maint, maint_cookie, number, title, newreq)
               num_items_added += 1
+              $logger.info "Added new item #{number}"
             else
               add_request_to_item(maint, maint_cookie, item, newreq)
               num_requests_added_to_existing_items += 1

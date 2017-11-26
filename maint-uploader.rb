@@ -15,6 +15,8 @@
 # limitations under the License.
 ####
 
+require 'rubygems'
+require 'slop'
 require 'open-uri'
 require 'date'
 require 'json'
@@ -65,8 +67,17 @@ end
 def add_request_to_item(api, cookie, item, newreq)
   itemid = item['id']
   option_hash = { content_type: :json, accept: :json, cookies: cookie }
-  res = api["items/#{itemid}/requests"].post newreq.to_json, option_hash
-  #twit = 11
+  begin
+    res = api["items/#{itemid}/requests"].post newreq.to_json, option_hash
+  rescue => e
+    $logger.error "add_request_to_item => exception #{e.class.name} : #{e.message}"
+    if (ej = JSON.parse(e.response)) && (eje = ej['errors'])
+      eje.each do |k, v|
+        $logger.error "#{k}: #{v.first}"
+      end
+      exit(1)
+    end
+  end
 end
 
 ####
@@ -74,8 +85,17 @@ end
 ####
 def delete_request(api, cookie, item, request)
   option_hash = { accept: :json, cookies: cookie }
-  res = api["items/#{item['id']}/requests/#{request['id']}"].delete option_hash
-  twit = 13
+  begin
+    res = api["items/#{item['id']}/requests/#{request['id']}"].delete option_hash
+  rescue => e
+    $logger.error "delete_request => exception #{e.class.name} : #{e.message}"
+    if (ej = JSON.parse(e.response)) && (eje = ej['errors'])
+      eje.each do |k, v|
+        $logger.error "#{k}: #{v.first}"
+      end
+      exit(1)
+    end
+  end
 end
 
 ####
@@ -83,10 +103,20 @@ end
 ####
 def add_new_item(api, cookie, number, subject, newreq)
   item = nil
-  option_hash = { content_type: :json, accept: :json, cookies: cookie }
-  newitem = { number: number, clause: newreq['clauseno'], date: newreq['date'], standard: newreq['standard'],
-    subject: subject }
-  res = api["items"].post newitem.to_json, option_hash
+  option_hash = {content_type: :json, accept: :json, cookies: cookie}
+  newitem = {number: number, clause: newreq['clauseno'], date: newreq['date'], standard: newreq['standard'],
+             subject: subject}
+  begin
+    res = api["items"].post newitem.to_json, option_hash
+  rescue => e
+    $logger.error "add_new_item => exception #{e.class.name} : #{e.message}"
+    if (ej = JSON.parse(e.response)) && (eje = ej['errors'])
+      eje.each do |k, v|
+        $logger.error "#{k}: #{v.first}"
+      end
+      exit(1)
+    end
+  end
   if res.code == 201
     item = JSON.parse(res.body)
     reqres = add_request_to_item(api, cookie, item, newreq)
@@ -196,18 +226,25 @@ def parse_request(url, creds)
 end
 
 begin
-  config = YAML.load(File.read("secrets.yml"))
+  opts = Slop.parse do |o|
+    o.string '-s', '--secrets', 'secrets YAML file name', default: 'secrets.yml'
+    o.bool   '-d', '--debug', 'debug mode'
+    o.bool   '-a', '--all', 'don\'t stop at first already-existing item'
+    o.on '--help' do
+      STDERR.puts o
+      exit
+    end
+  end
+  config = YAML.load(File.read(opts[:secrets]))
+
+  # Set up logging
+  $DEBUG = opts.debug?
+  $logger = Logger.new(STDERR)
+  $logger.level = Logger::INFO
+  $logger.level = Logger::DEBUG if $DEBUG
 #
 # Log in to the 802.1 Maintenance Database
 #
-  #$DEBUG = false
-  # If $PROCESS_ALL_ITEMS is false, the script will only process new items, stopping when it finds the
-  # first item that already exists in the database.
-  $PROCESS_ALL_ITEMS = false
-  $logger = Logger.new(STDOUT)
-  $logger.level = Logger::INFO
-  $logger.level = Logger::DEBUG if $DEBUG
-
   if $DEBUG
     RestClient.proxy = "http://localhost:8888"
     $logger.debug("Using HTTP proxy #{RestClient.proxy}")
@@ -218,7 +255,6 @@ begin
 # Save the session cookie
   maint_cookie = {}
   res.cookies.each { |ck| maint_cookie[ck[0]] = ck[1] if /_session/.match(ck[0]) }
-  #twit=10
 
 #
 # Parse each index page of the 802.1 Maintenance Reflector Archive
@@ -269,7 +305,7 @@ begin
         item = find_item(maint, number)
         request = {}
         if item
-          unless $PROCESS_ALL_ITEMS
+          unless opts[:all]
             $logger.info 'Stopping at first already-existing item'
             throw :done
           end
@@ -303,8 +339,6 @@ begin
             end
           end
         end
-
-        twit = 8
       end
       nextpage = pagedoc.search('tr')[1].children.search('td').children[4].attributes['href']
       em_arch_url = nextpage ? config['email_archive'] + '/' + nextpage.value : nil

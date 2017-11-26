@@ -337,6 +337,8 @@ begin
               add_request_to_item(maint, maint_cookie, item, newreq)
               num_requests_added_to_existing_items += 1
             end
+          else
+            $logger.warn "Could not parse request for item #{number}"
           end
         end
       end

@@ -35,6 +35,7 @@ def login(api, username, password)
   login_request['user']['password'] = password
 
   begin
+    # {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE}
     res = api['users/sign_in'].post login_request.to_json, { content_type: :json, accept: :json }
   rescue RestClient::ExceptionWithResponse => e
     abort "Could not log in: #{e.response.to_s}"
@@ -248,9 +249,11 @@ begin
   if $DEBUG
     RestClient.proxy = "http://localhost:8888"
     $logger.debug("Using HTTP proxy #{RestClient.proxy}")
+    maint = RestClient::Resource.new(config['api_uri'], verify_ssl: OpenSSL::SSL::VERIFY_NONE)
+  else
+    maint = RestClient::Resource.new(config['api_uri'])
   end
 
-  maint = RestClient::Resource.new(config['api_uri'])
   res = login(maint, config['email'], config['password'])
 # Save the session cookie
   maint_cookie = {}
@@ -306,7 +309,7 @@ begin
         request = {}
         if item
           unless opts[:all]
-            $logger.info 'Stopping at first already-existing item'
+            $logger.info "Stopping at first already-existing item (#{number})"
             throw :done
           end
           request = find_request(maint, item)
@@ -338,7 +341,7 @@ begin
               num_requests_added_to_existing_items += 1
             end
           else
-            $logger.warn "Could not parse request for item #{number}"
+            $logger.warn "Could not parse request for item #{number} at #{url}"
           end
         end
       end

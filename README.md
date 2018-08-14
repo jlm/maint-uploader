@@ -22,7 +22,7 @@ to isolate the secret information from the container, but I have not bothered to
 
 License
 -------
-Copyright 2016-2017 John Messenger
+Copyright 2016-2018 John Messenger
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

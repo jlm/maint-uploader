@@ -132,6 +132,7 @@ def parse_request(url, creds)
   rqstream = open(url, http_basic_authentication: creds)
   rqdoc = Nokogiri::HTML(rqstream)
   text = rqdoc.xpath('//body//text()').to_s     # this is a really cool line
+  text.gsub!('&nbsp;', ' ')                     # this is for Mick.  It's not a proper job though.
   return nil unless /^\+------------------------/.match(text)
   return nil unless /^| IEEE 802.+ REVISION REQUEST/.match(text)
   fields = {}
@@ -230,6 +231,7 @@ begin
   opts = Slop.parse do |o|
     o.string '-s', '--secrets', 'secrets YAML file name', default: 'secrets.yml'
     o.bool   '-d', '--debug', 'debug mode'
+    o.bool   '-p', '--slackpost', 'post alerts to Slack for new items'
     o.bool   '-a', '--all', 'don\'t stop at first already-existing item'
     o.on '--help' do
       STDERR.puts o
@@ -258,6 +260,13 @@ begin
 # Save the session cookie
   maint_cookie = {}
   res.cookies.each { |ck| maint_cookie[ck[0]] = ck[1] if /_session/.match(ck[0]) }
+
+#
+# If we are posting to Slack, open the Slack webhook
+#
+  if opts[:slackpost]
+    slack = RestClient::Resource.new(config['slack_webhook'])
+  end
 
 #
 # Parse each index page of the 802.1 Maintenance Reflector Archive
@@ -333,9 +342,43 @@ begin
           if newreq
             num_requests_parsed_ok += 1
             if item.nil?
-              add_new_item(maint, maint_cookie, number, title, newreq)
+              it = add_new_item(maint, maint_cookie, number, title, newreq)
               num_items_added += 1
-              $logger.info "Added new item #{number}"
+              iturl = maint["items/#{it['id']}"].url
+              $logger.info "Added new item #{number} at #{iturl.to_s}"
+              if opts[:slackpost]
+                slackdata = {
+                    "attachments": [
+                        {
+                            "fallback": "New item #{it['number']}: #{it['subject']}",
+                            "color": "good",
+                            "author_name": "#{newreq['name']}",
+                            "author_link": "mailto:#{newreq['email']}",
+                            "pretext": "New Maintenence item",
+                            "title": "Item \##{it['number']}: #{it['subject']}",
+                            "title_link": iturl,
+                            "text": newreq['rationale'],
+                            "fields": [
+                                {
+                                    "title": "Standard",
+                                    "value": it['standard'],
+                                    "short": true
+                                },
+                                {
+                                    "title": "Clause",
+                                    "value": it['clause'],
+                                    "short": true
+                                }
+                            ],
+                            "footer": "802.1",
+                            "footer_icon": "https://platform.slack-edge.com/img/default_application_icon.png",
+                            "ts": Date.parse(it['date']).to_time.to_i
+                        }
+                    ]
+                }
+                res = slack.post slackdata.to_json, { content_type: :json, accept: :json}
+                twit = 33
+              end
             else
               add_request_to_item(maint, maint_cookie, item, newreq)
               num_requests_added_to_existing_items += 1

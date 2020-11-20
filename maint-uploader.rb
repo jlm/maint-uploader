@@ -38,7 +38,7 @@ def login(api, username, password)
     # {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE}
     res = api['users/sign_in'].post login_request.to_json, { content_type: :json, accept: :json }
   rescue RestClient::ExceptionWithResponse => e
-    abort "Could not log in: #{e.response.to_s}"
+    abort "Could not log in to maintenance DB: #{e.response.to_s}"
   end
   res
 end
@@ -129,7 +129,18 @@ end
 # Given the URL of a Maintenance Reflector Archive entry, parse the text and return a hash containing the fields
 ####
 def parse_request(url, creds)
-  rqstream = open(url, http_basic_authentication: creds)
+  begin
+    rqstream = URI.open(url, http_basic_authentication: creds, redirect: false)
+  rescue => e
+    # Note: OPENuri won't redirect and then re-use the basic authentication.  This appears to be deliberate, though
+    # it results in a misleading error message.  So, we rescue on a redirect and re-state the authentication.
+    if e.is_a? (OpenURI::HTTPRedirect)
+      rqstream = URI.open(e.uri, http_basic_authentication: creds, redirect: false)
+    else
+      $logger.error "Opening email archive => exception #{e.class.name} : #{e.message}"
+      exit(1)
+    end
+  end
   rqdoc = Nokogiri::HTML(rqstream)
   text = rqdoc.xpath('//body//text()').to_s     # this is a really cool line
   text.gsub!('&nbsp;', ' ')                     # this is for Mick.  It's not a proper job though.
@@ -285,7 +296,18 @@ begin
 
   catch :done do
     while em_arch_url do
-      page = open(em_arch_url, http_basic_authentication: mtarch_creds) { |f| f.read }
+      begin
+        page = URI.open(em_arch_url, http_basic_authentication: mtarch_creds, redirect: false) { |f| f.read }
+      rescue => e
+        # Note: OPENuri won't redirect and then re-use the basic authentication.  This appears to be deliberate, though
+        # it results in a misleading error message.  So, we rescue on a redirect and re-state the authentication.
+        if e.is_a? (OpenURI::HTTPRedirect)
+          page = URI.open(e.uri, http_basic_authentication: mtarch_creds, redirect: false) { |f| f.read }
+        else
+          $logger.error "Opening email archive => exception #{e.class.name} : #{e.message}"
+          exit(1)
+        end
+      end
       pagedoc = Nokogiri::HTML(page)
       pagedoc.at('ul').search('li').each do |el|
         next unless el.children[0].name =~ /strong/
@@ -324,7 +346,7 @@ begin
           request = find_request(maint, item)
           if $DELETE_ALL_REQUESTS && !request.empty?
             delete_request(maint, maint_cookie, item, request)
-            $logger.warn "Deleting item #{number}"
+            $logger.warn "Deleting request from item #{number}"
             num_requests_deleted += 1
             request = {}
           end

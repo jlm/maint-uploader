@@ -1,6 +1,7 @@
-FROM ruby:2.4
+FROM ruby:2.7
 WORKDIR /usr/src/app
 COPY Gemfile* ./
+RUN bundle --version
 RUN bundle install
 COPY . .
 

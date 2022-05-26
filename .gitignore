@@ -18,6 +18,7 @@ pickle-email-*.html
 # TODO Comment out these rules if you are OK with secrets being uploaded to the repo
 config/initializers/secret_token.rb
 secrets.sh
+secrets/
 docker-tutum-stack*.yml
 docker-cloud-stack*.yml
 secrets.yml

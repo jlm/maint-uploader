@@ -2,6 +2,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     ast (2.4.2)
+    date (3.2.2)
     domain_name (0.5.20190701)
       unf (>= 0.0.5, < 1.0.0)
     http-accept (1.7.0)
@@ -17,6 +18,10 @@ GEM
     nokogiri (1.13.6)
       mini_portile2 (~> 2.8.0)
       racc (~> 1.4)
+    open-uri (0.2.0)
+      stringio
+      time
+      uri
     parallel (1.21.0)
     parser (3.0.3.2)
       ast (~> 2.4.1)
@@ -48,10 +53,15 @@ GEM
     standard (1.5.0)
       rubocop (= 1.23.0)
       rubocop-performance (= 1.12.0)
+    stringio (3.0.2)
+    time (0.2.0)
+      date
     unf (0.1.4)
       unf_ext
     unf_ext (0.0.8.2)
     unicode-display_width (2.1.0)
+    uri (0.11.0)
+    yaml (0.1.0)
 
 PLATFORMS
   ruby
@@ -61,10 +71,12 @@ DEPENDENCIES
   json (>= 2.3.0)
   logger
   nokogiri (~> 1.13)
+  open-uri
   rest-client (~> 2.1)
   rubocop
   slop
   standard
+  yaml
 
 BUNDLED WITH
    2.3.14

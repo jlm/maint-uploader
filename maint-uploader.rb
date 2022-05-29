@@ -16,143 +16,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ####
-
 require "rubygems"
-require "slop"
-require "open-uri"
-require "date"
-require "json"
-require "rest-client"
-require "yaml"
-require "nokogiri"
-require "logger"
-
-####
-# Log in to the Maintenance Database API
-####
-def login(api, username, password)
-  login_request = {}
-  login_request["user"] = {}
-  login_request["user"]["email"] = username
-  login_request["user"]["password"] = password
-
-  begin
-    # {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE}
-    res = api["users/sign_in"].post login_request.to_json, {content_type: :json, accept: :json}
-  rescue RestClient::ExceptionWithResponse => e
-    abort "Could not log in to maintenance DB: #{e.response}"
-  end
-  res
-end
-
-####
-# Search the Maintenance Database for an item with the specified number and return the parsed item
-####
-def find_item(api, number)
-  search_result = api["items"].get accept: :json, params: {search: number}
-  items = JSON.parse(search_result.body)
-  return nil if items.empty?
-
-  thisid = items[0]["id"]
-  JSON.parse(api["items/#{thisid}"].get(accept: :json))
-end
-
-####
-# Given a parsed item, return the corresponding request (if there is one)
-####
-def find_request(api, item)
-  itemid = item["id"]
-  JSON.parse((api["items/#{itemid}/requests"].get accept: :json).body)
-end
-
-####
-# Create a new request on an existing item
-####
-def add_request_to_item(api, cookie, item, newreq)
-  itemid = item["id"]
-  option_hash = {content_type: :json, accept: :json, cookies: cookie}
-  begin
-    _res = api["items/#{itemid}/requests"].post newreq.to_json, option_hash
-  rescue => e
-    $logger.error "add_request_to_item => exception #{e.class.name} : #{e.message}"
-    if (ej = JSON.parse(e.response)) && (eje = ej["errors"])
-      eje.each do |k, v|
-        $logger.error "#{k}: #{v.first}"
-      end
-      exit(1)
-    end
-  end
-end
-
-####
-# Delete a request which is attached to an item
-####
-def delete_request(api, cookie, item, request)
-  option_hash = {accept: :json, cookies: cookie}
-  begin
-    _res = api["items/#{item['id']}/requests/#{request['id']}"].delete option_hash
-  rescue => e
-    $logger.error "delete_request => exception #{e.class.name} : #{e.message}"
-    if (ej = JSON.parse(e.response)) && (eje = ej["errors"])
-      eje.each do |k, v|
-        $logger.error "#{k}: #{v.first}"
-      end
-      exit(1)
-    end
-  end
-end
-
-####
-# Create a new item and add a request to it
-####
-def add_new_item(api, cookie, number, subject, newreq)
-  item = nil
-  option_hash = {content_type: :json, accept: :json, cookies: cookie}
-  newitem = {number: number, clause: newreq["clauseno"], date: newreq["date"], standard: newreq["standard"],
-             subject: subject}
-  begin
-    res = api["items"].post newitem.to_json, option_hash
-  rescue => e
-    $logger.error "add_new_item => exception #{e.class.name} : #{e.message}"
-    if (ej = JSON.parse(e.response)) && (eje = ej["errors"])
-      eje.each do |k, v|
-        $logger.error "#{k}: #{v.first}"
-      end
-    end
-    exit(1)
-  end
-  if res.code == 201
-    item = JSON.parse(res.body)
-    add_request_to_item(api, cookie, item, newreq)
-  end
-  item
-end
+require "bundler/setup"
+Bundler.require
+require "./maint_client"
 
 ####
 # Given the URL of a Maintenance Reflector Archive entry, parse the text and return a hash containing the fields
 ####
-def parse_request(url, creds)
+def parse_request(url, creds, logger: nil)
   begin
-    rqstream = URI.parse(url).open(http_basic_authentication: creds, redirect: false)
+    request_stream = URI.parse(url).open(http_basic_authentication: creds, redirect: false)
   rescue => e
     # NOTE: OPENuri won't redirect and then re-use the basic authentication.  This appears to be deliberate, though
     # it results in a misleading error message.  So, we rescue on a redirect and re-state the authentication.
     if e.is_a?(OpenURI::HTTPRedirect)
-      rqstream = e.uri.open(http_basic_authentication: creds, redirect: false)
+      request_stream = e.uri.open(http_basic_authentication: creds, redirect: false)
     else
-      $logger.error "Opening email archive => exception #{e.class.name} : #{e.message}"
+      logger&.error "Opening email archive => exception #{e.class.name} : #{e.message}"
       exit(1)
     end
   end
-  rqdoc = Nokogiri::HTML(rqstream)
-  text = rqdoc.xpath("//body//text()").to_s     # this is a really cool line
-  text.gsub!("&nbsp;", " ")                     # this is for Mick.  It's not a proper job though.
+  parsed_request = Nokogiri::HTML(request_stream)
+  text = parsed_request.xpath("//body//text()").to_s # this is a really cool line
+  text.gsub!("&nbsp;", " ") # this is for Mick.  It's not a proper job though.
   return nil unless /^\+------------------------/.match?(text)
   return nil unless /^| IEEE 802.+ REVISION REQUEST/.match?(text)
 
   fields = {}
   # Get the date from the "Head-of-Message" because that's the date it was *really* posted.
-  rqdoc.at("ul").search("li").each do |li|
+  parsed_request.at("ul").search("li").each do |li|
     em = li.at("em")
     if /Date/.match?(em.children.to_s)
       fields["date"] = Date.parse(li.children[1].to_s[2..])
@@ -164,7 +57,7 @@ def parse_request(url, creds)
   # NAME
   matches = /^NAME:\s*(?<name>.+)\n/.match(text)
   unless matches
-    $logger.warn "Parse error (name) in Request #{url}"
+    logger&.warn "Parse error (name) in Request #{url}"
     return nil
   end
   fields.merge!(matches.names.zip(matches.captures).to_h)
@@ -172,7 +65,7 @@ def parse_request(url, creds)
   # COMPANY/AFFILIATION
   matches = /^COMPANY\/AFFILIATION:\s*(?<company>.+)\n/.match(text)
   unless matches
-    $logger.warn "Parse error (company) in Request #{url}"
+    logger&.warn "Parse error (company) in Request #{url}"
     return nil
   end
   fields.merge!(matches.names.zip(matches.captures).to_h)
@@ -180,7 +73,7 @@ def parse_request(url, creds)
   # E-MAIL
   matches = /^E-MAIL:\s*(?<email>.+)\n/.match(text)
   unless matches
-    $logger.warn "Parse error (email) in Request #{url}"
+    logger&.warn "Parse error (email) in Request #{url}"
     return nil
   end
   fields.merge!(matches.names.zip(matches.captures).to_h)
@@ -188,7 +81,7 @@ def parse_request(url, creds)
   # STANDARD
   matches = /^\s*STANDARD:\s*(?<standard>.+)\n/.match(text)
   unless matches
-    $logger.warn "Parse error (standard) in Request #{url}"
+    logger&.warn "Parse error (standard) in Request #{url}"
     return nil
   end
   fields.merge!(matches.names.zip(matches.captures).to_h)
@@ -196,7 +89,7 @@ def parse_request(url, creds)
   # CLAUSE NUMBER
   matches = /^\s*CLAUSE NUMBER:\s*(?<clauseno>.*)\n/.match(text)
   unless matches
-    $logger.warn "Parse error (clauseno) in Request #{url}"
+    logger&.warn "Parse error (clauseno) in Request #{url}"
     return nil
   end
   fields.merge!(matches.names.zip(matches.captures).to_h)
@@ -204,7 +97,7 @@ def parse_request(url, creds)
   # CLAUSE TITLE
   matches = /^\s*CLAUSE TITLE:\s*(?<clausetitle>.*)\n/.match(text)
   unless matches
-    $logger.warn "Parse error (clausetitle) in Request #{url}"
+    logger&.warn "Parse error (clausetitle) in Request #{url}"
     return nil
   end
   fields.merge!(matches.names.zip(matches.captures).to_h)
@@ -213,22 +106,22 @@ def parse_request(url, creds)
   # good.  What's more, it turns out that there can be embedded HTML in the message body.
   bin = :bin
   collection = {}
-  textcollection = +""
+  text_collection = +""
   text.each_line do |line|
     case line
     when /^RATIONALE/
-      collection[bin] = textcollection.strip
-      textcollection = +""
+      collection[bin] = text_collection.strip
+      text_collection = +""
       bin = :rationale
       next
     when /^PROPOSED REVISION/
-      collection[bin] = textcollection.strip
-      textcollection = +""
+      collection[bin] = text_collection.strip
+      text_collection = +""
       bin = :proposal
       next
     when /^IMPACT ON EXISTING/
-      collection[bin] = textcollection.strip
-      textcollection = +""
+      collection[bin] = text_collection.strip
+      text_collection = +""
       bin = :impact
       next
     else
@@ -237,16 +130,71 @@ def parse_request(url, creds)
     end
     break if /\+------------------------/.match(line) && (bin != :bin)
 
-    textcollection << line
+    text_collection << line
   end
 
-  collection[bin] = textcollection.strip
+  collection[bin] = text_collection.strip
   fields["rationale"] = collection[:rationale]
   fields["proposal"] = collection[:proposal]
   fields["impact"] = collection[:impact]
   fields
 end
 
+def post_slack_announcement(slack, it, item_url, new_request)
+  slack_data = {
+    attachments: [
+      {
+        fallback: "New item #{it["number"]}: #{it["subject"]}",
+        color: "good",
+        author_name: (new_request["name"]).to_s,
+        author_link: "mailto:#{new_request["email"]}",
+        pretext: "New Maintenance item",
+        title: "Item \##{it["number"]}: #{it["subject"]}",
+        title_link: item_url,
+        text: new_request["rationale"],
+        fields: [
+          {
+            title: "Standard",
+            value: it["standard"],
+            short: true
+          },
+          {
+            title: "Clause",
+            value: it["clause"],
+            short: true
+          }
+        ],
+        footer: "802.1",
+        footer_icon: "https://platform.slack-edge.com/img/default_application_icon.png",
+        ts: Date.parse(it["date"]).to_time.to_i
+      }
+    ]
+  }
+  slack&.post slack_data.to_json, {content_type: :json, accept: :json}
+end
+
+def fetch_page(url, creds, logger)
+  begin
+    page = URI.parse(url).open(http_basic_authentication: creds, redirect: false, &:read)
+  rescue => e
+    # NOTE: OPENuri won't redirect and then re-use the basic authentication.  This appears to be deliberate, though
+    # it results in a misleading error message.  So, we rescue on a redirect and re-state the authentication.
+    if e.is_a?(OpenURI::HTTPRedirect)
+      page = e.uri.open(http_basic_authentication: creds, redirect: false, &:read)
+    else
+      logger.error "Opening email archive => exception #{e.class.name} : #{e.message}"
+      exit(1)
+    end
+  end
+  page
+end
+
+DELETE_ALL_REQUESTS = false
+# rubocop:disable Layout/ExtraSpacing
+
+#
+# Main program
+#
 begin
   opts = Slop.parse do |o|
     o.string "-s", "--secrets", "secrets YAML file name", default: "secrets.yml"
@@ -254,38 +202,29 @@ begin
     o.bool   "-p", "--slackpost", "post alerts to Slack for new items"
     o.bool   "-a", "--all", "don't stop at first already-existing item"
     o.on "--help" do
-      $stderr.puts o
+      warn o
       exit
     end
   end
-  $delete_all_requests = false
   # noinspection RubyResolve
   config = YAML.safe_load(File.read(opts[:secrets]))
+  # rubocop:enable all
 
   # Set up logging
-  $debug = opts.debug?
-  $logger = Logger.new($stderr)
-  $logger.level = Logger::INFO
-  $logger.level = Logger::DEBUG if $debug
-  #
-  # Log in to the 802.1 Maintenance Database
-  #
-  if $debug
-    RestClient.proxy = "http://localhost:8888"
-    $logger.debug("Using HTTP proxy #{RestClient.proxy}")
-    maint = RestClient::Resource.new(config["api_uri"], verify_ssl: OpenSSL::SSL::VERIFY_NONE)
-  else
-    maint = RestClient::Resource.new(config["api_uri"])
+  debug = opts.debug?
+  logger = Logger.new($stderr)
+  logger.level = Logger::INFO
+  logger.level = Logger::DEBUG if debug
+
+  # Connect to the maintenance database
+  begin
+    maint = MaintClient.new(config["email"], config["password"], api_uri: config["api_uri"], logger: logger, debug: debug)
+  rescue => e
+    logger.fatal("Maintenance database: #{e.message}")
+    abort(e.message)
   end
 
-  res = login(maint, config["email"], config["password"])
-  # Save the session cookie
-  maint_cookie = {}
-  res.cookies.each { |ck| maint_cookie[ck[0]] = ck[1] if /_session/.match?(ck[0]) }
-
-  #
   # If we are posting to Slack, open the Slack webhook
-  #
   slack = if opts[:slackpost]
     RestClient::Resource.new(config["slack_webhook"])
   end
@@ -295,7 +234,7 @@ begin
   # and find the maintenance items
   #
   em_arch_url = config["email_archive"] + "/" + config["email_start"]
-  mtarch_creds = [config["archive_user"], config["archive_password"]]
+  archive_creds = [config["archive_user"], config["archive_password"]]
   num_requests = 0
   num_responses = 0
   num_malformed_title = 0
@@ -303,126 +242,83 @@ begin
   num_requests_deleted = 0
   num_requests_parsed_ok = 0
   num_items_added = 0
-  num_reqs_added_to_exstg_items = 0
+  num_reqs_added_to_exist_items = 0
 
   catch :done do
     while em_arch_url
-      begin
-        page = URI.parse(em_arch_url).open(http_basic_authentication: mtarch_creds, redirect: false, &:read)
-      rescue => e
-        # NOTE: OPENuri won't redirect and then re-use the basic authentication.  This appears to be deliberate, though
-        # it results in a misleading error message.  So, we rescue on a redirect and re-state the authentication.
-        if e.is_a?(OpenURI::HTTPRedirect)
-          page = e.uri.open(http_basic_authentication: mtarch_creds, redirect: false, &:read)
-        else
-          $logger.error "Opening email archive => exception #{e.class.name} : #{e.message}"
-          exit(1)
-        end
-      end
-      pagedoc = Nokogiri::HTML(page)
-      pagedoc.at("ul").search("li").each do |el|
+      parsed_page = Nokogiri::HTML(fetch_page(em_arch_url, archive_creds, logger))
+      parsed_page.at("ul").search("li").each do |el|
         next unless /strong/.match?(el.children[0].name)
 
         # For each message...
         num_requests += 1
         href = el.children[0].children[0].attributes["href"].to_s
         url = config["email_archive"] + "/" + href
-        titlestr = el.children[0].children[0].children[0].to_s
-        if /^[Rr][Ee]/.match?(titlestr) # discard responses to other maintenance items
+        title_string = el.children[0].children[0].children[0].to_s
+        if /^[Rr][Ee]/.match?(title_string) # discard responses to other maintenance items
           num_responses += 1
           next
         end
-        mtchdata = /^\[802.1_maint_req - (?<number>\d+)\] (?<title>.+)/.match(titlestr)
-        unless mtchdata
+        match_data = /^\[802.1_maint_req - (?<number>\d+)\] (?<title>.+)/.match(title_string)
+        unless match_data
           num_malformed_title += 1
           next
         end
-        number = "%04d" % mtchdata["number"]
-        title = mtchdata["title"]
-        $logger.debug "#{number}: #{title}: #{url}"
+        number = "%04d" % match_data["number"]
+        title = match_data["title"]
+        logger.debug "#{number}: #{title}: #{url}"
         if config["blacklist"].include? number
-          $logger.info "Ignoring blacklisted item #{number}"
+          logger.info "Ignoring blacklisted item #{number}"
           next
         end
 
-        #
         # Find the item in the database, and its corresponding request
-        #
-        item = find_item(maint, number)
+        item = maint.find_item(number)
         request = {}
         if item
           unless opts[:all]
-            $logger.info "Stopping at first already-existing item (#{number})"
+            logger.info "Stopping at first already-existing item (#{number})"
             throw :done
           end
-          request = find_request(maint, item)
-          if $delete_all_requests && !request.empty?
-            delete_request(maint, maint_cookie, item, request)
-            $logger.warn "Deleting request from item #{number}"
-            num_requests_deleted += 1
+          request = maint.find_request(item)
+          if DELETE_ALL_REQUESTS && !request.empty?
+            logger.warn "Deleting request from item #{number}"
+            num_requests_deleted += 1 if maint.delete_request(item, request)
             request = {}
           end
         else
-          $logger.info "Item #{number} not found"
+          logger.info "Item #{number} not found"
           num_unfound_items += 1
         end
 
-        #
         # If there's no request, parse the corresponding archive entry to get the fields.
-        # If we can parse the request, then create the item and/or the request in the database
-        #
         next unless request.empty?
 
-        newreq = parse_request(url, mtarch_creds)
-        if newreq
+        # If we can parse the request, then create the item and/or the request in the database
+        new_request = parse_request(url, archive_creds)
+        if new_request
           num_requests_parsed_ok += 1
           if item.nil?
-            it = add_new_item(maint, maint_cookie, number, title, newreq)
-            num_items_added += 1
-            iturl = maint["items/#{it['id']}"].url
-            $logger.info "Added new item #{number} at #{iturl}"
-            if opts[:slackpost]
-              slackdata = {
-                attachments: [
-                  {
-                    fallback: "New item #{it['number']}: #{it['subject']}",
-                    color: "good",
-                    author_name: (newreq["name"]).to_s,
-                    author_link: "mailto:#{newreq['email']}",
-                    pretext: "New Maintenence item",
-                    title: "Item \##{it['number']}: #{it['subject']}",
-                    title_link: iturl,
-                    text: newreq["rationale"],
-                    fields: [
-                      {
-                        title: "Standard",
-                        value: it["standard"],
-                        short: true
-                      },
-                      {
-                        title: "Clause",
-                        value: it["clause"],
-                        short: true
-                      }
-                    ],
-                    footer: "802.1",
-                    footer_icon: "https://platform.slack-edge.com/img/default_application_icon.png",
-                    ts: Date.parse(it["date"]).to_time.to_i
-                  }
-                ]
-              }
-              _res = slack&.post slackdata.to_json, {content_type: :json, accept: :json}
+            (it, item_url) = maint.add_new_item(number, title, new_request)
+            if it
+              num_items_added += 1
+              logger.info "Added new item #{number} at #{item_url}"
+            else
+              logger.error "Failed to add new item #{number}"
+              next
             end
+            post_slack_announcement(slack, it, item_url, new_request) if opts[:slackpost]
+          elsif maint.add_request_to_item(item, new_request)
+            num_reqs_added_to_exist_items += 1
           else
-            add_request_to_item(maint, maint_cookie, item, newreq)
-            num_reqs_added_to_exstg_items += 1
+            logger.error "Adding request to item #{number} failed"
           end
         else
-          $logger.warn "Could not parse request for item #{number} at #{url}"
+          logger.warn "Could not parse request for item #{number} at #{url}"
         end
       end
-      nextpage = pagedoc.search("tr")[1].children.search("td").children[4].attributes["href"]
-      em_arch_url = nextpage ? config["email_archive"] + "/" + nextpage.value : nil
+      next_page = parsed_page.search("tr")[1].children.search("td").children[4].attributes["href"]
+      em_arch_url = next_page ? config["email_archive"] + "/" + next_page.value : nil
     end
   end
 
@@ -433,7 +329,7 @@ begin
   puts("num_requests_deleted: #{num_requests_deleted}\n")
   puts("num_requests_parsed_ok: #{num_requests_parsed_ok}\n")
   puts("num_items_added: #{num_items_added}\n")
-  puts("num_requests_added_to_existing_items: #{num_reqs_added_to_exstg_items}\n")
+  puts("num_requests_added_to_existing_items: #{num_reqs_added_to_exist_items}\n")
 rescue StopIteration
   # Ignored
 end

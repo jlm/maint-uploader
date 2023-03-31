@@ -2,7 +2,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     ast (2.4.2)
-    date (3.2.2)
+    date (3.3.3)
     domain_name (0.5.20190701)
       unf (>= 0.0.5, < 1.0.0)
     http-accept (1.7.0)
@@ -54,7 +54,7 @@ GEM
       rubocop (= 1.23.0)
       rubocop-performance (= 1.12.0)
     stringio (3.0.2)
-    time (0.2.0)
+    time (0.2.2)
       date
     unf (0.1.4)
       unf_ext

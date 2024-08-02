@@ -33,7 +33,8 @@ GEM
       http-cookie (>= 1.0.2, < 2.0)
       mime-types (>= 1.16, < 4.0)
       netrc (~> 0.8)
-    rexml (3.2.5)
+    rexml (3.3.3)
+      strscan
     rubocop (1.23.0)
       parallel (~> 1.10)
       parser (>= 3.0.0.0)
@@ -54,6 +55,7 @@ GEM
       rubocop (= 1.23.0)
       rubocop-performance (= 1.12.0)
     stringio (3.0.2)
+    strscan (3.1.0)
     time (0.2.0)
       date
     unf (0.1.4)

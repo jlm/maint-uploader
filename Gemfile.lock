@@ -60,7 +60,7 @@ GEM
       unf_ext
     unf_ext (0.0.8.2)
     unicode-display_width (2.1.0)
-    uri (0.11.0)
+    uri (0.12.1)
     yaml (0.1.0)
 
 PLATFORMS
